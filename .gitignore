@@ -1,0 +1,25 @@
+# Données (trop volumineuses pour GitHub)
+data/
+
+# Modèles et sorties (optionnel : enlever outputs/ si tu veux partager les résultats)
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Fichiers locaux
+*.log
+.env

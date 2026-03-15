@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Résultats — PlantVillage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+      --card: rgba(255,255,255,0.06);
+      --card-border: rgba(255,255,255,0.1);
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --accent: #22c55e;
+      --accent-soft: rgba(34, 197, 94, 0.2);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+      line-height: 1.5;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.25rem;
+    }
+    header p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+    }
+    .metric-card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 1.25rem;
+      text-align: center;
+      backdrop-filter: blur(8px);
+    }
+    .metric-card .value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .metric-card .label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 0.25rem;
+    }
+
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--text);
+    }
+
+    .table-wrap {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 2rem;
+      backdrop-filter: blur(8px);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th, td { padding: 0.75rem 1rem; text-align: left; }
+    th {
+      background: rgba(0,0,0,0.2);
+      font-weight: 600;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    tr:nth-child(even) { background: rgba(255,255,255,0.03); }
+    tr:hover { background: var(--accent-soft); }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .class-name { max-width: 280px; word-break: break-word; }
+
+    .confusion-wrap {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      text-align: center;
+      backdrop-filter: blur(8px);
+    }
+    .confusion-wrap img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 12px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+    }
+    .confusion-wrap .section-title { margin-bottom: 1rem; }
+
+    footer {
+      text-align: center;
+      margin-top: 2rem;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Résultats d'évaluation — PlantVillage</h1>
+      <p>Classification des maladies des plantes · TP</p>
+      <p style="margin-top:0.5rem; font-size:0.85rem;">{{ date }}</p>
+    </header>
+
+    <div class="metrics">
+      <div class="metric-card">
+        <div class="value">{{ "%.2f"|format(accuracy * 100) }}%</div>
+        <div class="label">Accuracy (test)</div>
+      </div>
+      <div class="metric-card">
+        <div class="value">{{ "%.4f"|format(macro_f1) }}</div>
+        <div class="label">Macro F1</div>
+      </div>
+      <div class="metric-card">
+        <div class="value">{{ "%.4f"|format(weighted_f1) }}</div>
+        <div class="label">Weighted F1</div>
+      </div>
+      <div class="metric-card">
+        <div class="value">{{ n_test }}</div>
+        <div class="label">Échantillons test</div>
+      </div>
+      <div class="metric-card">
+        <div class="value">{{ num_classes }}</div>
+        <div class="label">Classes</div>
+      </div>
+    </div>
+
+    <div class="section-title">Rapport par classe (precision / recall / F1)</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Classe</th>
+            <th class="num">Precision</th>
+            <th class="num">Recall</th>
+            <th class="num">F1-score</th>
+            <th class="num">Support</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in classes %}
+          <tr>
+            <td class="class-name">{{ c.name }}</td>
+            <td class="num">{{ "%.4f"|format(c.precision) }}</td>
+            <td class="num">{{ "%.4f"|format(c.recall) }}</td>
+            <td class="num">{{ "%.4f"|format(c['f1-score']) }}</td>
+            <td class="num">{{ c.support }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-title">Matrice de confusion</div>
+    <div class="confusion-wrap">
+      <img src="/outputs/confusion_matrix.png" alt="Matrice de confusion" />
+    </div>
+
+    <footer>
+      Projet PlantVillage · ResNet18 · Généré par evaluate.py
+    </footer>
+  </div>
+</body>
+</html>
