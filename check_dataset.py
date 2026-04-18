@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-from collections import Counter
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
@@ -17,19 +16,16 @@ def main() -> None:
         fail(f"DATA_DIR n'existe pas ou n'est pas un dossier : {data_dir}")
 
     class_dirs = [d for d in data_dir.iterdir() if d.is_dir()]
-    if len(class_dirs) != 38:
+    if len(class_dirs) == 0:
         fail(
-            f"DATA_DIR doit contenir exactement 38 sous-dossiers (classes), trouvé {len(class_dirs)}."
+            f"Aucune classe détectée dans {data_dir}. "
+            "Ajoutez au moins un sous-dossier de classe contenant des images."
         )
-
-    class_names = sorted(d.name for d in class_dirs)
-    print(f"Nombre de classes : {len(class_names)}")
-    print("Quelques classes (5) :", ", ".join(class_names[:5]))
 
     counts = {}
     total_images = 0
 
-    for d in class_dirs:
+    for d in sorted(class_dirs, key=lambda x: x.name.lower()):
         imgs = [
             p
             for p in d.rglob("*")
@@ -42,12 +38,34 @@ def main() -> None:
         counts[d.name] = len(imgs)
         total_images += len(imgs)
 
-    print(f"Nombre total d'images : {total_images}")
+    min_class, min_count = min(counts.items(), key=lambda item: item[1])
+    max_class, max_count = max(counts.items(), key=lambda item: item[1])
+    is_imbalanced = max_count > 2 * min_count
 
-    top10 = Counter(counts).most_common(10)
-    print("Top 10 des classes par nombre d'images :")
-    for cls, n in top10:
-        print(f"  {cls}: {n}")
+    sep = "=" * 64
+    print(sep)
+    print("RAPPORT DE VÉRIFICATION DU DATASET")
+    print(sep)
+    print(f"Dossier analysé      : {data_dir}")
+    print(f"Nombre de classes    : {len(class_dirs)}")
+    print(f"Nombre total d'images: {total_images}")
+    print()
+    print("-" * 64)
+    print("IMAGES PAR CLASSE")
+    print("-" * 64)
+    for cls in sorted(counts):
+        print(f"{cls:<40} {counts[cls]:>6}")
+    print()
+    print("-" * 64)
+    print("STATISTIQUES CLÉS")
+    print("-" * 64)
+    print(f"Classe la plus petite : {min_class} ({min_count} images)")
+    print(f"Classe la plus grande : {max_class} ({max_count} images)")
+    print(
+        "Déséquilibre détecté  : "
+        + ("Oui (max > 2 x min)" if is_imbalanced else "Non")
+    )
+    print(sep)
 
 
 if __name__ == "__main__":
