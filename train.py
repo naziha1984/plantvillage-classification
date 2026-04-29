@@ -31,6 +31,12 @@ def _denormalize_image(tensor: torch.Tensor) -> np.ndarray:
     return img
 
 
+def set_requires_grad(model: torch.nn.Module, requires_grad: bool) -> None:
+    """Active/désactive le calcul du gradient pour un module."""
+    for p in model.parameters():
+        p.requires_grad = requires_grad
+
+
 def visualize_data_augmentation(
     data_dir: Path, train_transform: transforms.Compose, output_dir: Path
 ) -> None:
@@ -71,6 +77,39 @@ def visualize_data_augmentation(
     print(f"Aperçu des augmentations sauvegardé : {output_path}")
 
 
+def calibrate_temperature(
+    model: torch.nn.Module, val_loader: DataLoader, device: torch.device
+) -> float:
+    """Ajuste une température simple sur les logits du set de validation."""
+    model.eval()
+    logits_list = []
+    labels_list = []
+
+    with torch.no_grad():
+        for images, labels in val_loader:
+            images = images.to(device)
+            outputs = model(images)
+            logits_list.append(outputs)
+            labels_list.append(labels.to(device))
+
+    logits = torch.cat(logits_list)
+    labels = torch.cat(labels_list)
+
+    temperature = torch.ones(1, device=device, requires_grad=True)
+    optimizer = optim.LBFGS([temperature], lr=0.01, max_iter=50)
+    criterion = nn.CrossEntropyLoss()
+
+    def closure():
+        optimizer.zero_grad()
+        scaled_logits = logits / temperature.clamp(min=1e-3)
+        loss = criterion(scaled_logits, labels)
+        loss.backward()
+        return loss
+
+    optimizer.step(closure)
+    return float(temperature.detach().clamp(min=1e-3).item())
+
+
 def main() -> None:
     set_seed(42)
 
@@ -79,8 +118,11 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     batch_size = 64
-    num_epochs = 10
-    lr = 1e-3
+    phase1_epochs = 3
+    lr_phase1 = 1e-3
+    # Total epochs (phase1 + phase2) = 15
+    phase2_epochs = 12
+    lr_phase2 = 1e-4
     val_split = 0.1
     img_size = 224
 
@@ -90,11 +132,13 @@ def main() -> None:
     train_transform = transforms.Compose(
         [
             transforms.RandomResizedCrop(
-                size=(img_size, img_size), scale=(0.9, 1.0)
+                size=(img_size, img_size), scale=(0.8, 1.0)
             ),
             transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(15),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            transforms.RandomRotation(20),
+            transforms.ColorJitter(
+                brightness=0.3, contrast=0.3, saturation=0.3
+            ),
             transforms.ToTensor(),
             transforms.Normalize(
                 mean=[0.485, 0.456, 0.406],
@@ -112,7 +156,7 @@ def main() -> None:
             ),
         ]
     )
-    print("Data augmentation enabled")
+    print("Advanced data augmentation enabled")
     print("Astuce rapport : lance `python train.py --preview-aug` pour capturer l'aperçu.")
 
     if "--preview-aug" in sys.argv:
@@ -155,68 +199,154 @@ def main() -> None:
     torch.save(idx_to_class, output_dir / "idx_to_class.pt")
 
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    # Dropout est utilisé pour réduire l'overfitting : il désactive aléatoirement
+    # une partie des activations pendant l'entraînement, ce qui améliore la
+    # généralisation.
+    model.fc = nn.Sequential(
+        nn.Dropout(p=0.5),
+        nn.Linear(model.fc.in_features, num_classes),
+    )
     model.to(device)
 
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    # Label smoothing: réduit la surconfiance en "adouçissant" les labels,
+    # ce qui améliore souvent la généralisation (et donc la confiance globale).
+    print("Using label smoothing to improve generalization")
+    criterion = nn.CrossEntropyLoss(
+        weight=class_weights, label_smoothing=0.1
+    )
 
-    best_val_acc = 0.0
-    best_model_path = output_dir / "best_model.pth"
+    def train_phase(
+        phase_label: str,
+        num_epochs_phase: int,
+        optimizer_phase: optim.Optimizer,
+        best_val_acc: float,
+        best_val_loss: float,
+        epochs_no_improve: int,
+        early_stop_patience: int,
+    ) -> tuple[float, float, int, bool]:
+        for epoch in range(1, num_epochs_phase + 1):
+            model.train()
+            running_loss = 0.0
+            correct = 0
+            total = 0
 
-    for epoch in range(1, num_epochs + 1):
-        model.train()
-        running_loss = 0.0
-        correct = 0
-        total = 0
-
-        for images, labels in tqdm(
-            train_loader, desc=f"Epoch {epoch}/{num_epochs} - train"
-        ):
-            images, labels = images.to(device), labels.to(device)
-
-            optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item() * images.size(0)
-            _, preds = torch.max(outputs, 1)
-            correct += (preds == labels).sum().item()
-            total += labels.size(0)
-
-        train_loss = running_loss / total
-        train_acc = correct / total
-
-        model.eval()
-        val_correct = 0
-        val_total = 0
-        with torch.no_grad():
             for images, labels in tqdm(
-                val_loader, desc=f"Epoch {epoch}/{num_epochs} - val"
+                train_loader,
+                desc=f"{phase_label} — Epoch {epoch}/{num_epochs_phase} - train",
             ):
                 images, labels = images.to(device), labels.to(device)
+
+                optimizer_phase.zero_grad()
                 outputs = model(images)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer_phase.step()
+
+                running_loss += loss.item() * images.size(0)
                 _, preds = torch.max(outputs, 1)
-                val_correct += (preds == labels).sum().item()
-                val_total += labels.size(0)
+                correct += (preds == labels).sum().item()
+                total += labels.size(0)
 
-        val_acc = val_correct / val_total
-        print(
-            f"Epoch {epoch}: "
-            f"train_loss={train_loss:.4f}, train_acc={train_acc:.4f}, val_acc={val_acc:.4f}"
-        )
+            train_loss = running_loss / total
+            train_acc = correct / total
 
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            torch.save(model.state_dict(), best_model_path)
+            model.eval()
+            val_correct = 0
+            val_total = 0
+            running_val_loss = 0.0
+            with torch.no_grad():
+                for images, labels in tqdm(
+                    val_loader,
+                    desc=f"{phase_label} — Epoch {epoch}/{num_epochs_phase} - val",
+                ):
+                    images, labels = images.to(device), labels.to(device)
+                    outputs = model(images)
+                    loss_val = criterion(outputs, labels)
+                    running_val_loss += loss_val.item() * labels.size(0)
+                    _, preds = torch.max(outputs, 1)
+                    val_correct += (preds == labels).sum().item()
+                    val_total += labels.size(0)
+
+            val_acc = val_correct / val_total
+            val_loss = running_val_loss / val_total
             print(
-                f"Meilleur modèle sauvegardé dans {best_model_path} "
-                f"avec val_acc={best_val_acc:.4f}"
+                f"{phase_label} | Epoch {epoch}: "
+                f"train_loss={train_loss:.4f}, train_acc={train_acc:.4f}, "
+                f"val_loss={val_loss:.4f}, val_acc={val_acc:.4f}"
             )
 
-    print("Entraînement terminé.")
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                torch.save(model.state_dict(), best_model_path)
+                print(
+                    f"Meilleur modèle sauvegardé dans {best_model_path} "
+                    f"avec val_acc={best_val_acc:.4f}"
+                )
+
+            # Early stopping logic based on validation loss
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+
+            if epochs_no_improve >= early_stop_patience:
+                print("Early stopping triggered")
+                return best_val_acc, best_val_loss, epochs_no_improve, True
+
+        return best_val_acc, best_val_loss, epochs_no_improve, False
+
+    best_model_path = output_dir / "best_model.pth"
+    best_val_acc = 0.0
+
+    # Early stopping (monitor validation loss)
+    best_val_loss = float("inf")
+    early_stop_patience = 3
+    epochs_no_improve = 0
+
+    print("Phase 1: feature extraction")
+    set_requires_grad(model, False)
+    set_requires_grad(model.fc, True)
+    optimizer_phase1 = optim.Adam(model.fc.parameters(), lr=lr_phase1)
+    best_val_acc, best_val_loss, epochs_no_improve, early_stopped = train_phase(
+        "Phase 1: feature extraction",
+        phase1_epochs,
+        optimizer_phase1,
+        best_val_acc,
+        best_val_loss,
+        epochs_no_improve,
+        early_stop_patience,
+    )
+
+    if early_stopped:
+        print("Entraînement terminé (early stopping).")
+        return
+
+    print("Phase 2: fine-tuning")
+    set_requires_grad(model.layer4, True)
+    set_requires_grad(model.fc, True)
+    optimizer_phase2 = optim.Adam(
+        [p for p in model.parameters() if p.requires_grad], lr=lr_phase2
+    )
+    best_val_acc, best_val_loss, epochs_no_improve, early_stopped = train_phase(
+        "Phase 2: fine-tuning",
+        phase2_epochs,
+        optimizer_phase2,
+        best_val_acc,
+        best_val_loss,
+        epochs_no_improve,
+        early_stop_patience,
+    )
+
+    if early_stopped:
+        print("Entraînement terminé (early stopping).")
+    else:
+        print("Entraînement terminé.")
+
+    model.load_state_dict(torch.load(best_model_path, map_location=device))
+    temperature = calibrate_temperature(model, val_loader, device)
+    torch.save({"temperature": temperature}, output_dir / "temperature.pt")
+    print("Model calibrated with temperature scaling")
 
 
 if __name__ == "__main__":

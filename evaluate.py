@@ -87,11 +87,25 @@ def main() -> None:
     idx_to_class = torch.load(output_dir / "idx_to_class.pt")
     target_names = [idx_to_class[i] for i in range(num_classes)]
 
+    state_dict = torch.load(model_path, map_location=device)
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-    model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    # Compatibilité : ancien modèle (fc linéaire) ou nouveau (Dropout + Linear)
+    has_sequential_head = any(k.startswith("fc.1.") for k in state_dict.keys())
+    if has_sequential_head:
+        model.fc = torch.nn.Sequential(
+            torch.nn.Dropout(p=0.5),
+            torch.nn.Linear(model.fc.in_features, num_classes),
+        )
+    else:
+        model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+    model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
+    temperature_path = output_dir / "temperature.pt"
+    temperature = 1.0
+    if temperature_path.exists():
+        temperature_data = torch.load(temperature_path, map_location="cpu")
+        temperature = float(temperature_data.get("temperature", 1.0))
 
     all_preds: list = []
     all_labels: list = []
@@ -100,6 +114,7 @@ def main() -> None:
         for images, labels in test_loader:
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
+            outputs = outputs / max(temperature, 1e-3)
             _, preds = torch.max(outputs, 1)
             all_preds.extend(preds.cpu().numpy().tolist())
             all_labels.extend(labels.cpu().numpy().tolist())

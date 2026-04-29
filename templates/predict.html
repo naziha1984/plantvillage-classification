@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prédiction — PlantVillage</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 2rem;
+      line-height: 1.5;
+    }
+    .container { max-width: 980px; margin: 0 auto; }
+    .card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px;
+      padding: 1.25rem;
+      margin-top: 1rem;
+    }
+    h1 { font-size: 1.6rem; margin-bottom: 0.5rem; }
+    .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .col { flex: 1; min-width: 260px; }
+    input[type="file"] { width: 100%; }
+    button {
+      margin-top: 0.75rem;
+      background: #22c55e;
+      border: none;
+      color: white;
+      padding: 0.6rem 1rem;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .error {
+      background: rgba(239,68,68,0.18);
+      border: 1px solid rgba(239,68,68,0.35);
+      padding: 0.75rem 1rem;
+      border-radius: 12px;
+      margin-top: 1rem;
+    }
+    .result {
+      font-size: 1.05rem;
+      margin-top: 0.5rem;
+    }
+    .muted { color: #94a3b8; font-size: 0.9rem; }
+    .sep { height: 1px; background: rgba(255,255,255,0.12); margin: 1rem 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Prédiction d'une image — PlantVillage</h1>
+    <div class="muted">Chargez une photo (jpg/png) pour obtenir la classe prédite et la confiance.</div>
+
+    {% if error %}
+      <div class="error">
+        <strong>Erreur :</strong> {{ error }}
+      </div>
+    {% endif %}
+
+    <div class="card">
+      <form method="POST" enctype="multipart/form-data">
+        <div>
+          <label><strong>Image</strong></label>
+          <input type="file" name="image" accept="image/*" required />
+        </div>
+        <button type="submit">Prédire</button>
+      </form>
+    </div>
+
+    {% if uploaded_image_url %}
+      <div class="card">
+        <div class="row">
+          <div class="col">
+            <div><strong>Image envoyée</strong></div>
+            <div class="sep"></div>
+            <img src="{{ uploaded_image_url }}" alt="Image envoyée" />
+          </div>
+          <div class="col">
+            <div><strong>Résultat</strong></div>
+            <div class="sep"></div>
+            <div class="result">
+              <div><span class="muted">Classe prédite :</span> <strong>{{ predicted_class }}</strong></div>
+              <div style="margin-top:0.5rem;">
+                <span class="muted">Confiance :</span>
+                <strong>{{ "%.2f"|format(confidence * 100) }}%</strong>
+              </div>
+            </div>
+            <div class="muted" style="margin-top:0.75rem;">
+              La confiance correspond à la probabilité softmax du modèle.
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>
+
